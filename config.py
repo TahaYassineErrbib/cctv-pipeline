@@ -1,6 +1,6 @@
 """
 Central configuration for the CCTV attribute pipeline.
-Edit the paths in this file to match your local machine — nowhere else.
+Edit the paths in this file to match your local machine -- nowhere else.
 """
 
 import os
@@ -14,16 +14,16 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Input source. One of:
 #   - local video file path (str)
 #   - 0 (int) for webcam
-#   - a YouTube URL (str) — resolved to a direct stream URL at runtime via
+#   - a YouTube URL (str) -- resolved to a direct stream URL at runtime via
 #     yt-dlp, only when USE_YOUTUBE_STREAM is True below
-VIDEO_SOURCE = ""
+VIDEO_SOURCE = "rtsp://admin:PASS@192.168.10.14:554/Streaming/Channels/102"
 
 # Set True and put a YouTube URL in VIDEO_SOURCE to pull from a live stream
 # instead of a local file. Requires: pip install yt-dlp
 USE_YOUTUBE_STREAM = False
 YOUTUBE_STREAM_QUALITY = "best[ext=mp4]/best"  # yt-dlp format selector
 
-# Model checkpoints — EDIT to your local paths
+# Model checkpoints -- EDIT to your local paths
 CHECKPOINTS_DIR = os.path.join(BASE_DIR, "checkpoints")
 C1_CKPT_PATH = os.path.join(CHECKPOINTS_DIR, "garment_type_v2.pth")
 C2_CKPT_PATH = os.path.join(CHECKPOINTS_DIR, "C2_long_type_resnet50.pth")
@@ -31,7 +31,7 @@ C3_CKPT_PATH = os.path.join(CHECKPOINTS_DIR, "C3_upper_resnet50.pth")
 C4_CKPT_PATH = os.path.join(CHECKPOINTS_DIR, "C4_lower_resnet50.pth")
 UPPER_LOWER_DETECTOR_PATH = os.path.join(CHECKPOINTS_DIR, "upper_lower_detector.pt")
 # CHANGED: now a pose model instead of the plain detector. Same .track()
-# call, same per-frame cost — but results now also include per-person
+# call, same per-frame cost -- but results now also include per-person
 # keypoints (used for pose-based upper/lower splitting in
 # vision/pose_splitting.py). Auto-downloads if missing, same as before.
 YOLO_WEIGHTS = "yolov8n-pose.pt"
@@ -102,6 +102,13 @@ IMAGENET_STD = [0.229, 0.224, 0.225]
 # a given sample (see vision/pose_splitting.py + vision/splitting.py).
 UPPER_SPLIT_RATIO = 0.55
 LOWER_SPLIT_RATIO = 0.45
+
+# Which upper/lower splitting method the pipeline uses. One of:
+#   "fixed_ratio"   -- vision.splitting, the original 55/45 geometric cut
+#   "yolo_detector" -- vision.splitting_yolo, trained YOLOv8n box detector
+#   "pose"          -- vision.pose_splitting, YOLOv8-pose keypoints
+# Switch this to test each method on the live feed one at a time.
+SPLIT_METHOD = "fixed_ratio"
 
 # NEW: minimum per-keypoint confidence to trust a pose keypoint for
 # upper/lower splitting. Below this, vision/pose_splitting.py treats the
