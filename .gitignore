@@ -1,0 +1,16 @@
+# Model checkpoints (large binaries)
+checkpoints/*.pth
+
+# Runtime outputs
+data/*.json
+snapshots/*
+!snapshots/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+venv/
+*.egg-info/
+
+# OS
+.DS_Store
