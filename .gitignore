@@ -14,3 +14,5 @@ venv/
 
 # OS
 .DS_Store
+checkpoints/*.pt
+*.pt
