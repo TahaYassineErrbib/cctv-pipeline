@@ -1,0 +1,28 @@
+# CCTV attribute pipeline — Python dependencies
+# Generated from actual imports across the repo (cv2, numpy, PIL, torch,
+# torchvision, ultralytics, yt_dlp). Stdlib imports (os, sys, json, time,
+# threading, argparse, collections) need no install.
+#
+# Install:
+#   python3 -m venv venv
+#   source venv/bin/activate
+#   pip install --upgrade pip
+#   pip install -r requirements.txt
+#
+# NOTE on torch/torchvision: the lines below install CPU-only wheels.
+# If you have an NVIDIA GPU and want CUDA acceleration, check your driver's
+# CUDA version with `nvidia-smi`, then instead run the matching command from
+# https://pytorch.org/get-started/locally/ BEFORE installing the rest of
+# this file (e.g. for CUDA 12.1:
+#   pip install torch==2.12.1 torchvision==0.27.1 --index-url https://download.pytorch.org/whl/cu121
+# ), then comment out the torch/torchvision lines below and run
+# `pip install -r requirements.txt` for everything else.
+
+torch==2.12.1
+torchvision==0.27.1
+
+ultralytics==8.4.75      # YOLOv8 detection + bundled ByteTrack tracker
+opencv-python==4.13.0.88
+numpy==2.4.4
+pillow==12.2.0
+yt-dlp==2026.6.9

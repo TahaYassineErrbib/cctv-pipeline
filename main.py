@@ -18,6 +18,12 @@ Per frame:
 Video source can be a local file, webcam index (0), or a YouTube URL
 (set config.USE_YOUTUBE_STREAM = True and put the URL in config.VIDEO_SOURCE).
 
+CHANGED: pipeline.tracker now runs a yolov8-pose model, so each detection
+also carries pose keypoints. Those are passed into build_attribute_profile
+so the standard-garment branch can use pose-based upper/lower splitting
+(vision/pose_splitting.py) instead of always using the fixed 55%/45%
+geometric split. No other control flow changes.
+
 Run with: python main.py
 """
 
@@ -111,7 +117,20 @@ def main():
                 # Tracking itself (the track_id) is completely unaffected by
                 # this skip; we just don't trust this particular frame's
                 # crop enough to classify it.
-                profile = build_attribute_profile(person_crop, models_dict)
+                #
+                # CHANGED: pass this detection's pose keypoints (full-frame
+                # coords) + crop_origin through, so the standard-garment
+                # branch can attempt a pose-based upper/lower split before
+                # falling back to the geometric one. keypoints_xy/_conf are
+                # None if pose data wasn't available for this detection —
+                # build_attribute_profile handles that fallback internally.
+                profile = build_attribute_profile(
+                    person_crop,
+                    models_dict,
+                    keypoints_xy=det.get("keypoints_xy"),
+                    keypoints_conf=det.get("keypoints_conf"),
+                    crop_origin=(x1, y1),
+                )
                 last_known_profiles[track_id] = profile
 
                 locked_result = aggregator.add_sample(track_id, profile)

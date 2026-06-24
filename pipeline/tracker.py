@@ -3,11 +3,21 @@ Wraps Ultralytics' built-in tracking (.track() with ByteTrack) so the rest
 of the pipeline just asks for "detections with track IDs for this frame"
 without caring about the underlying tracker config.
 
+CHANGED: config.YOLO_WEIGHTS now points at a yolov8*-pose.pt model instead
+of the plain detector. Same .track() call, same cost -- but results.keypoints
+is now populated alongside results.boxes, so each detection also carries
+its pose keypoints (used downstream for pose-based upper/lower splitting
+instead of the fixed 55%/45% geometric ratio). If keypoints come back None
+for a given detection (low-confidence person, edge of frame, etc.), that
+detection's "keypoints_xy"/"keypoints_conf" are set to None and the caller
+falls back to the geometric split -- this file never assumes pose data is
+present.
+
 Also flags occlusion: when two tracked people's bboxes overlap significantly
 in the same frame (e.g. one walking behind/across another), both are marked
 "occluded" so the attribute-sampling stage can skip them for that frame
 without breaking tracking continuity. ByteTrack keeps following the track ID
-regardless — this flag only affects whether we trust the crop for
+regardless -- this flag only affects whether we trust the crop for
 classification right now.
 """
 
@@ -70,18 +80,27 @@ def track_frame(yolo_model, frame):
 
     Returns a list of dicts:
         [{"track_id": int, "bbox": (x1, y1, x2, y2), "conf": float,
-          "occluded": bool}, ...]
+          "occluded": bool,
+          "keypoints_xy": (17, 2) ndarray or None,
+          "keypoints_conf": (17,) ndarray or None}, ...]
 
     Only "person" class detections above the configured confidence
     threshold are returned. Detections without a track ID yet (can happen
     on the very first frame or right after a track is lost/reacquired) are
-    skipped — they'll get an ID on a subsequent frame.
+    skipped -- they'll get an ID on a subsequent frame.
 
     "occluded" is True if this person's bbox overlaps another tracked
-    person's bbox above OCCLUSION_IOU_THRESHOLD in this same frame —
+    person's bbox above OCCLUSION_IOU_THRESHOLD in this same frame --
     signals to the rest of the pipeline that this crop probably contains a
     blend of two people and shouldn't be trusted for classification right
     now, even though tracking itself continues normally.
+
+    keypoints_xy/keypoints_conf are in FULL-FRAME pixel coordinates (not
+    crop-local) -- callers that need crop-local coords must offset by the
+    detection's own bbox origin (x1, y1). They are None when the model
+    didn't return keypoints for this frame at all (e.g. plain detector
+    weights were used instead of a -pose model) or when ultralytics
+    couldn't estimate a pose for this particular detection.
     """
     results = yolo_model.track(
         frame,
@@ -96,6 +115,11 @@ def track_frame(yolo_model, frame):
         return detections
 
     boxes = results.boxes
+
+    # keypoints is None entirely if pose weights weren't used; otherwise
+    # it's indexed row-for-row with boxes (same detection order).
+    keypoints = getattr(results, "keypoints", None)
+
     for i in range(len(boxes)):
         cls_id = int(boxes.cls[i])
         conf = float(boxes.conf[i])
@@ -106,10 +130,18 @@ def track_frame(yolo_model, frame):
         track_id = int(boxes.id[i])
         x1, y1, x2, y2 = map(int, boxes.xyxy[i])
 
+        kpt_xy = None
+        kpt_conf = None
+        if keypoints is not None and keypoints.xy is not None and i < len(keypoints.xy):
+            kpt_xy = keypoints.xy[i].cpu().numpy()
+            kpt_conf = keypoints.conf[i].cpu().numpy() if keypoints.conf is not None else None
+
         detections.append({
             "track_id": track_id,
             "bbox": (x1, y1, x2, y2),
             "conf": conf,
+            "keypoints_xy": kpt_xy,
+            "keypoints_conf": kpt_conf,
         })
 
     detections = _flag_occlusions(detections)

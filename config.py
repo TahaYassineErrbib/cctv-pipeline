@@ -16,11 +16,11 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 #   - 0 (int) for webcam
 #   - a YouTube URL (str) — resolved to a direct stream URL at runtime via
 #     yt-dlp, only when USE_YOUTUBE_STREAM is True below
-VIDEO_SOURCE = "https://www.youtube.com/watch?v=6MMXJrzT5c0"
+VIDEO_SOURCE = ""
 
 # Set True and put a YouTube URL in VIDEO_SOURCE to pull from a live stream
 # instead of a local file. Requires: pip install yt-dlp
-USE_YOUTUBE_STREAM = True
+USE_YOUTUBE_STREAM = False
 YOUTUBE_STREAM_QUALITY = "best[ext=mp4]/best"  # yt-dlp format selector
 
 # Model checkpoints — EDIT to your local paths
@@ -29,8 +29,12 @@ C1_CKPT_PATH = os.path.join(CHECKPOINTS_DIR, "garment_type_v2.pth")
 C2_CKPT_PATH = os.path.join(CHECKPOINTS_DIR, "C2_long_type_resnet50.pth")
 C3_CKPT_PATH = os.path.join(CHECKPOINTS_DIR, "C3_upper_resnet50.pth")
 C4_CKPT_PATH = os.path.join(CHECKPOINTS_DIR, "C4_lower_resnet50.pth")
-
-YOLO_WEIGHTS = "yolov8n.pt"  # auto-downloads if missing
+UPPER_LOWER_DETECTOR_PATH = os.path.join(CHECKPOINTS_DIR, "upper_lower_detector.pt")
+# CHANGED: now a pose model instead of the plain detector. Same .track()
+# call, same per-frame cost — but results now also include per-person
+# keypoints (used for pose-based upper/lower splitting in
+# vision/pose_splitting.py). Auto-downloads if missing, same as before.
+YOLO_WEIGHTS = "yolov8n-pose.pt"
 
 # Output locations
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -48,7 +52,7 @@ os.makedirs(SNAPSHOT_DIR, exist_ok=True)
 # Weak-GPU friendly: only run the full classification tree every Nth frame.
 # Tracking itself still runs every frame (it's cheap) so IDs stay consistent;
 # only the expensive classifier calls are skipped on non-sampled frames.
-PROCESS_EVERY_N_FRAMES = 10
+PROCESS_EVERY_N_FRAMES = 5
 
 # Save an annotated snapshot image every time a frame is actually processed
 SAVE_SNAPSHOTS = True
@@ -93,9 +97,20 @@ CLASSIFIER_IMG_SIZE = 224
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 
-# Geometric upper/lower split ratios (slight overlap around the waist)
+# Geometric upper/lower split ratios (slight overlap around the waist).
+# Still used as the FALLBACK split when pose keypoints aren't usable for
+# a given sample (see vision/pose_splitting.py + vision/splitting.py).
 UPPER_SPLIT_RATIO = 0.55
 LOWER_SPLIT_RATIO = 0.45
+
+# NEW: minimum per-keypoint confidence to trust a pose keypoint for
+# upper/lower splitting. Below this, vision/pose_splitting.py treats the
+# point as "not visible" and the caller falls back to the geometric split
+# above instead of trusting a noisy/guessed coordinate. CCTV footage often
+# has low-confidence ankle keypoints (legs cut off by camera angle), so
+# this mainly governs how often the lower box falls back to "hip -> crop
+# bottom" instead of "hip -> ankle".
+POSE_KEYPOINT_CONF_THRESHOLD = 0.5
 
 # C1 class list fallback if checkpoint has no embedded class names.
 # Confirmed via 03_inspect_C1_model.ipynb / runtime logs: ['long', 'standard']
@@ -128,4 +143,4 @@ CLASS_COLORS_BGR = {
 
 DEFAULT_BOX_COLOR_BGR = (0, 255, 0)
 UPPER_BOX_COLOR_BGR = (0, 165, 255)   # used for the upper-region sub-box outline
-LOWER_BOX_COLOR_BGR = (0, 200, 0)     # used for the lower-region sub-box outline   
+LOWER_BOX_COLOR_BGR = (0, 200, 0)     # used for the lower-region sub-box outline
