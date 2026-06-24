@@ -4,9 +4,10 @@ sub-region boxes (color-coded per predicted class), and label overlays.
 Keeping this separate from pipeline logic means UI changes never touch
 the classification code.
 
-Color sample box drawing has been removed -- the profile no longer
-contains color fields or color_sample_box / upper_color_box / lower_color_box
-keys, since color extraction was stripped from attribute_profile.py.
+Color labels are back (pose-anchored multi-region color, see
+pipeline/attribute_profile.py) -- no color SAMPLE BOX drawing this time
+since sampling now happens across multiple pose-anchored sub-regions
+rather than one fixed box.
 """
 
 import cv2
@@ -35,7 +36,8 @@ def draw_person_annotation(frame, bbox, track_id, profile):
     Draws:
       - the full person bbox (color = garment_type class color)
       - sub-region boxes for upper/lower (color = predicted class), if present
-      - text labels for track ID, garment type, and each sub-classification
+      - text labels for track ID, garment type, and each sub-classification,
+        including the pose-anchored multi-region color name when available
     """
     x1, y1, x2, y2 = bbox
 
@@ -48,6 +50,8 @@ def draw_person_annotation(frame, bbox, track_id, profile):
     if "long_type" in profile:
         lt = profile["long_type"]
         label = f"{lt['class']} ({lt['confidence']:.2f})"
+        if lt.get("color"):
+            label += f" {lt['color']['name']}"
         _put_label(frame, label, x1, y2 + 18, _color_for_class(lt["class"]))
 
     else:
@@ -61,6 +65,8 @@ def draw_person_annotation(frame, bbox, track_id, profile):
             upper_color = _color_for_class(upper.get("class"))
             cv2.rectangle(frame, (x1, y1 + uy1), (x2, y1 + uy2), upper_color, 1)
             upper_label = f"U: {upper.get('class')} ({upper.get('confidence', 0):.2f})"
+            if upper.get("color"):
+                upper_label += f" {upper['color']['name']}"
             _put_label(frame, upper_label, x1, y1 + uy2 - 4, upper_color, font_scale=0.4)
 
         if lower_box is not None:
@@ -68,6 +74,8 @@ def draw_person_annotation(frame, bbox, track_id, profile):
             lower_color = _color_for_class(lower.get("class"))
             cv2.rectangle(frame, (x1, y1 + ly1), (x2, y1 + ly2), lower_color, 1)
             lower_label = f"L: {lower.get('class')} ({lower.get('confidence', 0):.2f})"
+            if lower.get("color"):
+                lower_label += f" {lower['color']['name']}"
             _put_label(frame, lower_label, x1, y2 + 18, lower_color, font_scale=0.4)
 
     return frame

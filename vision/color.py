@@ -210,3 +210,136 @@ def extract_color_for_region(crop_bgr, region):
 
     color = extract_dominant_color(trimmed)
     return color, box_coords
+
+# ---------------------------------------------------------------------
+# Multi-region, pose-anchored color extraction (additive -- the original
+# extract_color_for_region() above is untouched and still usable).
+#
+# Runs k-means independently in each pose-anchored sub-region, then
+# combines them via confidence-weighted voting where the weight comes
+# from TWO signals multiplied together:
+#   1. how dominant the winning k-means cluster was in that sub-region
+#      (cluster pixel count / total pixels)
+#   2. an HSV-based trust factor -- a sub-region that's mostly dark/
+#      desaturated (shadow, washed-out highlight) is down-weighted, since
+#      a "dominant" cluster there is more likely noise than true garment
+#      color, even if it technically won by pixel count.
+# ---------------------------------------------------------------------
+
+def _hsv_trust_factor(rgb_value):
+    """
+    Returns a 0-1 trust score for a color sample based on its HSV
+    saturation and value. Low saturation (washed out / grayish) or
+    very low/high value (deep shadow / blown-out highlight) reduce
+    trust, since these are the conditions where a k-means "dominant"
+    cluster is most likely to be lighting artifact rather than true
+    garment color.
+    """
+    h, s, v = _rgb_to_hsv_single(rgb_value)
+
+    s_norm = s / 255.0
+    v_norm = v / 255.0
+
+    sat_trust = 0.3 + 0.7 * s_norm
+
+    if v_norm < 0.15 or v_norm > 0.95:
+        val_trust = 0.3
+    else:
+        val_trust = 1.0
+
+    return sat_trust * val_trust
+
+
+def _kmeans_dominant_with_fraction(crop_bgr, k=3):
+    """
+    Like extract_dominant_color(), but also returns what FRACTION of
+    pixels belonged to the winning cluster -- needed as one half of the
+    multi-region vote weight (see _hsv_trust_factor for the other half).
+    Returns (color_dict, dominance_fraction) or (None, 0.0) for empty crops.
+    """
+    if crop_bgr is None or crop_bgr.size == 0:
+        return None, 0.0
+
+    skin_mask = _build_skin_mask(crop_bgr)
+    rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
+
+    keep_mask = ~skin_mask
+    if keep_mask.sum() > 0:
+        pixels = rgb[keep_mask].astype(np.float32)
+    else:
+        pixels = rgb.reshape(-1, 3).astype(np.float32)
+
+    if pixels.shape[0] == 0:
+        return None, 0.0
+
+    if pixels.shape[0] < k:
+        mean_rgb = pixels.mean(axis=0)
+        color = {"name": _nearest_named_color(mean_rgb), "rgb": tuple(int(c) for c in mean_rgb)}
+        return color, 1.0
+
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 20, 0.5)
+    _, labels, centers = cv2.kmeans(pixels, k, None, criteria, attempts=3, flags=cv2.KMEANS_PP_CENTERS)
+
+    counts = np.bincount(labels.flatten())
+    winning_idx = int(np.argmax(counts))
+    dominant_rgb = centers[winning_idx]
+    dominance_fraction = float(counts[winning_idx]) / float(len(labels))
+
+    color = {"name": _nearest_named_color(dominant_rgb), "rgb": tuple(int(c) for c in dominant_rgb)}
+    return color, dominance_fraction
+
+
+def extract_color_multi_region(crop_bgr, subregion_boxes):
+    """
+    Pose-anchored multi-region color extraction.
+
+    subregion_boxes: list of (x1, y1, x2, y2) crop-local boxes, as returned
+    by vision.pose_color_regions.compute_color_subregions(). Each box is
+    independently k-means'd, then all sub-region results are combined via
+    confidence-weighted voting (weight = cluster dominance x HSV trust).
+
+    Returns {"name": str, "rgb": (r, g, b), "num_subregions_used": int}
+    or None if no sub-region produced a usable color.
+    """
+    if not subregion_boxes:
+        return None
+
+    name_votes = {}
+    rgb_by_name = {}
+
+    for box in subregion_boxes:
+        x1, y1, x2, y2 = box
+        sub_crop = crop_bgr[y1:y2, x1:x2]
+        sub_crop = _trim_border(sub_crop)
+
+        color, dominance_fraction = _kmeans_dominant_with_fraction(sub_crop)
+        if color is None:
+            continue
+
+        trust = _hsv_trust_factor(color["rgb"])
+        weight = dominance_fraction * trust
+
+        name = color["name"]
+        name_votes[name] = name_votes.get(name, 0.0) + weight
+        rgb_by_name.setdefault(name, []).append((color["rgb"], weight))
+
+    if not name_votes:
+        return None
+
+    winning_name = max(name_votes, key=name_votes.get)
+
+    agreeing = rgb_by_name[winning_name]
+    total_weight = sum(w for _, w in agreeing)
+    if total_weight > 0:
+        avg_rgb = tuple(
+            int(sum(rgb[c] * w for rgb, w in agreeing) / total_weight)
+            for c in range(3)
+        )
+    else:
+        avg_rgb = agreeing[0][0]
+
+    return {
+        "name": winning_name,
+        "rgb": avg_rgb,
+        "num_subregions_used": len(agreeing),
+    }

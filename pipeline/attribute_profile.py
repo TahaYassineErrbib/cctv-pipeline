@@ -1,32 +1,44 @@
 """
 Runs the full hierarchical classification tree on one person crop and
 builds an attribute profile dict, including the upper/lower sub-region
-boxes (so the UI layer can draw them).
+boxes (so the UI layer can draw them) and pose-anchored multi-region
+color extraction.
 
-Color extraction has been removed entirely for now -- no color fields
-in the profile, no calls into vision.color. Re-add later if needed; the
-color module itself is untouched on disk.
+Two INDEPENDENT pose-related concerns, kept deliberately separate:
 
-Splitting method is selected via config.SPLIT_METHOD ("fixed_ratio",
-"yolo_detector", or "pose"), so each can be tested on the live feed one
-at a time without juggling multiple models in memory at once. All three
-return the same (upper_crop, lower_crop, upper_box, lower_box) shape, so
-nothing downstream needs to know which one ran -- except "pose", which
-additionally needs this detection's keypoints to do anything pose-based;
-without them it silently behaves like "fixed_ratio" for that frame.
+  1. UPPER/LOWER GARMENT-TYPE SPLITTING -- controlled by config.SPLIT_METHOD
+     ("fixed_ratio" / "yolo_detector" / "pose"). Currently settled on
+     "yolo_detector" (vision.splitting_yolo), trained specifically for
+     this task.
+
+  2. COLOR SAMPLING -- ALWAYS pose-anchored now, regardless of
+     SPLIT_METHOD. Uses vision.pose_color_regions to find a shoulder-hip
+     quad (upper) and hip-knee quad (lower) from keypoints, splits each
+     into sub-regions, and votes across them via
+     vision.color.extract_color_multi_region. If keypoints aren't usable
+     for a given sample, color silently comes back None for that sample
+     rather than falling back to the old fixed-box method -- the
+     aggregator's confidence-weighted voting (pipeline/track_aggregator.py)
+     already tolerates missing per-sample color gracefully.
+
+keypoints_xy/keypoints_conf come from pipeline.tracker.track_frame(),
+which already runs the pose model every frame as part of normal person
+tracking -- so this does NOT add a second model load. It just uses
+keypoints that were already being computed.
 """
 
 import config
 from models.classify import classify
 from vision.splitting import split_upper_lower as _split_fixed_ratio
+from vision.color import extract_color_multi_region
+from vision.pose_color_regions import compute_color_subregions
 
 
 def _split_upper_lower(person_crop_bgr, keypoints_xy, keypoints_conf, crop_origin):
     """
-    Dispatches to whichever split method config.SPLIT_METHOD selects.
-    Returns (upper_crop, lower_crop, upper_box, lower_box, split_method_used)
-    -- the last element records what ACTUALLY ran this time (useful for
-    "pose" mode, which can silently fall back per-frame).
+    Dispatches to whichever GARMENT-TYPE split method config.SPLIT_METHOD
+    selects. Returns (upper_crop, lower_crop, upper_box, lower_box,
+    split_method_used).
     """
     method = config.SPLIT_METHOD
 
@@ -52,6 +64,21 @@ def _split_upper_lower(person_crop_bgr, keypoints_xy, keypoints_conf, crop_origi
     return upper_crop, lower_crop, upper_box, lower_box, "fixed_ratio"
 
 
+def _extract_pose_color(person_crop_bgr, keypoints_xy, keypoints_conf, crop_origin, region):
+    """
+    Always-pose-anchored color extraction for one region ("upper" or
+    "lower"). Returns the color dict from extract_color_multi_region(),
+    or None if keypoints weren't usable for this sample.
+    """
+    subregion_boxes = compute_color_subregions(
+        person_crop_bgr, keypoints_xy, keypoints_conf, crop_origin, region=region
+    )
+    if subregion_boxes is None:
+        return None
+
+    return extract_color_multi_region(person_crop_bgr, subregion_boxes)
+
+
 def build_attribute_profile(person_crop_bgr, models_dict, keypoints_xy=None,
                              keypoints_conf=None, crop_origin=(0, 0)):
     """
@@ -60,16 +87,13 @@ def build_attribute_profile(person_crop_bgr, models_dict, keypoints_xy=None,
 
     keypoints_xy / keypoints_conf: this person's pose keypoints from
     pipeline.tracker.track_frame(), in FULL-FRAME coordinates, or None if
-    pose data isn't available for this detection (or config.SPLIT_METHOD
-    isn't "pose", in which case these are simply unused). crop_origin is
-    the (x1, y1) of person_crop_bgr's bbox in the full frame, needed to
-    convert those keypoints into crop-local coordinates.
+    pose data isn't available for this detection. crop_origin is the
+    (x1, y1) of person_crop_bgr's bbox in the full frame.
 
-    Returns a profile dict. For STANDARD garments, also includes
-    "upper_box" / "lower_box" (y_start, y_end) tuples relative to the
-    person crop, so the drawing layer can render sub-region rectangles,
-    plus "split_method" recording which method actually produced this
-    sample's boxes.
+    Returns a profile dict. For STANDARD garments, includes "upper_box" /
+    "lower_box" (from whichever SPLIT_METHOD is active) plus a "color"
+    field per region (always pose-anchored, independent of SPLIT_METHOD).
+    "split_method" records which GARMENT-TYPE split method actually ran.
     """
     c1_model, c1_classes = models_dict["c1"]
     c2_model, c2_classes = models_dict["c2"]
@@ -86,9 +110,13 @@ def build_attribute_profile(person_crop_bgr, models_dict, keypoints_xy=None,
 
     if is_long:
         long_type, c2_conf = classify(c2_model, c2_classes, person_crop_bgr)
+        long_color = _extract_pose_color(
+            person_crop_bgr, keypoints_xy, keypoints_conf, crop_origin, region="long"
+        )
         profile["long_type"] = {
             "class": long_type,
             "confidence": round(c2_conf, 3),
+            "color": long_color,
         }
     else:
         upper_crop, lower_crop, upper_box, lower_box, split_method = _split_upper_lower(
@@ -99,13 +127,22 @@ def build_attribute_profile(person_crop_bgr, models_dict, keypoints_xy=None,
         upper_class, c3_conf = classify(c3_model, c3_classes, upper_crop)
         lower_class, c4_conf = classify(c4_model, c4_classes, lower_crop)
 
+        upper_color = _extract_pose_color(
+            person_crop_bgr, keypoints_xy, keypoints_conf, crop_origin, region="upper"
+        )
+        lower_color = _extract_pose_color(
+            person_crop_bgr, keypoints_xy, keypoints_conf, crop_origin, region="lower"
+        )
+
         profile["upper"] = {
             "class": upper_class,
             "confidence": round(c3_conf, 3),
+            "color": upper_color,
         }
         profile["lower"] = {
             "class": lower_class,
             "confidence": round(c4_conf, 3),
+            "color": lower_color,
         }
         profile["upper_box"] = upper_box
         profile["lower_box"] = lower_box

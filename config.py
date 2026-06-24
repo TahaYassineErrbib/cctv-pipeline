@@ -17,7 +17,11 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 #   - a YouTube URL (str) -- resolved to a direct stream URL at runtime via
 #     yt-dlp, only when USE_YOUTUBE_STREAM is True below
 VIDEO_SOURCE = "rtsp://admin:PASS@192.168.10.14:554/Streaming/Channels/102"
-
+try:
+    from local_config import VIDEO_SOURCE_OVERRIDE
+    VIDEO_SOURCE = VIDEO_SOURCE_OVERRIDE
+except ImportError:
+    pass  # local_config.py doesn't exist -- fine, keep using the placeholder above
 # Set True and put a YouTube URL in VIDEO_SOURCE to pull from a live stream
 # instead of a local file. Requires: pip install yt-dlp
 USE_YOUTUBE_STREAM = False
@@ -52,7 +56,7 @@ os.makedirs(SNAPSHOT_DIR, exist_ok=True)
 # Weak-GPU friendly: only run the full classification tree every Nth frame.
 # Tracking itself still runs every frame (it's cheap) so IDs stay consistent;
 # only the expensive classifier calls are skipped on non-sampled frames.
-PROCESS_EVERY_N_FRAMES = 5
+PROCESS_EVERY_N_FRAMES = 7
 
 # Save an annotated snapshot image every time a frame is actually processed
 SAVE_SNAPSHOTS = True
@@ -108,7 +112,7 @@ LOWER_SPLIT_RATIO = 0.45
 #   "yolo_detector" -- vision.splitting_yolo, trained YOLOv8n box detector
 #   "pose"          -- vision.pose_splitting, YOLOv8-pose keypoints
 # Switch this to test each method on the live feed one at a time.
-SPLIT_METHOD = "fixed_ratio"
+SPLIT_METHOD = "yolo_detector"
 
 # NEW: minimum per-keypoint confidence to trust a pose keypoint for
 # upper/lower splitting. Below this, vision/pose_splitting.py treats the

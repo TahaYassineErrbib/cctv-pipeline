@@ -171,7 +171,7 @@ def main():
                 # not-yet-sampled) — draw a plain box so it's still visible
                 cv2.rectangle(frame, (x1, y1), (x2, y2), config.DEFAULT_BOX_COLOR_BGR, 2)
 
-        if do_classify:
+        if do_classify and len(detections) > 0:
             save_snapshot(frame, frame_idx)
 
         elapsed = time.time() - t_start

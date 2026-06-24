@@ -16,3 +16,8 @@ venv/
 .DS_Store
 checkpoints/*.pt
 *.pt
+local_config.py
+debug/output/
+debug/sample_images/
+debug/output/
+debug/sample_images/
