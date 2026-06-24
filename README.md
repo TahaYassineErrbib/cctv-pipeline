@@ -88,7 +88,7 @@ used throughout the dataset, training notebooks, and code.
 3. Create `local_config.py` in the project root for any real camera
    credentials — this file is gitignored and never committed:
    ```python
-   VIDEO_SOURCE_OVERRIDE = "rtsp://user:password@camera-ip:554/Streaming/Channels/102"
+   VIDEO_SOURCE_OVERRIDE = "URL GOES HERE" 
    ```
    `config.py` automatically picks this up if the file exists, and falls
    back to the placeholder `VIDEO_SOURCE` otherwise.
